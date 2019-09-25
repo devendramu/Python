@@ -1,0 +1,479 @@
+    def f_vpn_show_aaa_sess(self, strUsername, expSessions=-1, blnComparePrevOutput=0):         #TODO: Enhance as per need. TBD if comparePrevOutput shud be here or somewhere else or needed at all
+        if(blnComparePrevOutput):
+            self.lstAAASessionPrev = self.lstAAASession
+        try:
+            #Get aaa session details
+            actualSessions = 0
+            aaasession_obj = aaasession()
+            self.lstAAASession = aaasession_obj.get(self.nsSession)
+            objLog.debug("Current AAA Session List on NS:" + "\n" + str(self.lstAAASession))
+            for i in self.lstAAASession:
+                if(i.username == strUsername):
+                    objLog.info("The user " + strUsername + " has AAA session in the DUT.")
+                    actualSessions = actualSessions + 1
+
+                    if(blnComparePrevOutput):
+                        if(self.lstAAASessionPrev == self.lstAAASession):
+                            pass
+#                    return True
+            if(actualSessions == 0):
+                objLog.critical("The user " + strUsername + " doesn't have AAA session in the DUT.")
+#                return False
+            if(expSessions != -1 and (actualSessions != expSessions)):
+                objLog.error("Expected Sessions:" + expSessions + ", and Actual Sessions:" + actualSessions + " are not matching")
+                return False
+            elif(expSessions == -1 and actualSessions == 0):
+                objLog.error("There are no AAA sessions found")
+                return False
+            return True
+
+        except nitro_exception as e:
+            objLog.critical("Exception::f_vpn_show_aaa_sess::errorcode="+str(e.errorcode)+",message="+ e.message)
+            return False
+        except Exception as e:
+            objLog.critical("Exception::f_vpn_show_aaa_sess::message="+str(e.args))
+            return False
+
+    def f_getClientServerIP (self, lstICAConnection, intDestPort ):
+        # lstClientIP = l_InitVars.lstClientIP
+        for i in lstICAConnection:                # get the client ip form the list of client IPs as defined in the global initvars.py
+            if (i.destport == intDestPort):
+                for ip in l_InitVars.lstClientIP:
+                    if (ip == i.srcip) or (str(ip)+"/0" == i.srcip):
+                        self.strClientIP = i.srcip
+                        self.strDestIP = i.destip
+                        objLog.debug("Client IP is detected to be : " + self.strClientIP)
+                        objLog.debug("XA/VDA IP is detected to be : " + self.strDestIP)
+                        return True
+                else:
+                    objLog.critical("Unable to detect the client IP in the ica connection output. Check the global l_InitVars.py for the client IP details.")
+                    return False
+
+    def f_show_ica_connection(self, strUsername, expectedConn=-1):
+        try:
+            vpn_ica_connection_obj = vpnicaconnection()
+            self.lstICAConnection = vpn_ica_connection_obj.get(self.nsSession)
+            objLog.debug("Current ICA Connection List on NS:" + "\n" + str(self.lstICAConnection))
+            icaconnections = 0
+            for i in self.lstICAConnection:
+                if (i.username == strUsername):
+                    objLog.info("The user " + strUsername + " has an ica connection in the DUT")
+                    icaconnections = icaconnections + 1
+#                    return True
+                else:
+                    objLog.critical("The user " + strUsername + " doesn't have an ica conneciton")
+#                    return False
+            if( (expectedConn != -1) and (icaconnections != expectedConn) ):
+                objLog.error("Expected ICA Connection:" + expectedConn + ",Actual ICA Connections:" + icaconnections +" are not matching")
+                return False
+            elif (expectedConn == -1) and (icaconnections == 0):
+                objLog.error("There are no ICA connections found")
+                return False
+            return True
+        except nitro_exception as e:
+            objLog.critical("Exception::f_show_ica_connection::errorcode="+str(e.errorcode)+",message="+ e.message)
+            return False
+        except Exception as e:
+            objLog.critical("Exception::f_show_ica_connection::message="+str(e.args))
+            return False
+
+    def f_icaconn_ismsi(self, strUsername):
+        self.blnIsMSI = 0                                       # resetting the Flag before validating
+        intCount = 0
+        lstDestPort = []                                        # list to populate the MSI ports from the DUT outputa
+        lstMSIDestPort = l_InitVars.lstMSIDestPort          # list of MSI ports to compare
+        lstSrcPort = []
+        lstDestIP = []
+        
+
+        try:
+            if (self.f_show_ica_connection(strUsername)):         # if the icaconnection reports True
+                if self.f_getClientServerIP(self.lstICAConnection, l_InitVars.intCGPPort):
+                    for i in self.lstICAConnection:                 # count the number of connections for the user from the same client
+                        if ((i.username == strUsername) and (i.srcip == self.strClientIP)):      # if the given username and the client ip is in the ICA connection output:
+                            intCount += 1
+                            lstDestPort.append(i.destport)          # record the destination port for each connection
+                            lstSrcPort.append(i.srcport)            # record the source port for each connection
+                            lstDestIP.append(i.destip)
+                    lstMSIDestPort.sort()
+                    lstDestPort.sort()
+                    #if (intCount >= 4) and (lstMSIDestPort == lstDestPort) and (lstDestIP.count(self.strDestIP) == intCount):
+                    if (lstMSIDestPort == lstDestPort) and (lstDestIP.count(self.strDestIP) == intCount):      # if there are all (typically 4) the expected connections to the configured MSI ports, to the same destination IP:
+                        objLog.info("The user " + strUsername + " has " + str(intCount) + " MSI connections from " + self.strClientIP + " to " + self.strDestIP + " on ports: " + str(lstMSIDestPort))
+                        self.blnIsMSI = 1                           # then: MSI is successful
+                        return True
+                    else:
+                        objLog.critical("The user " + strUsername + " has only " + str(intCount) + " ICA connections. No MSI as expected")
+                        for i in self.lstICAConnection:                 # count the number of connections for the user from the same client
+                            objLog.debug(i.username + " - " + str(i.srcip) + ":" + str(i.srcport) + " to " + str(i.destip) + ":" + str(i.destport))
+                        objLog.debug("Expected connections are to the ports " + str(lstMSIDestPort))
+                        self.blnIsMSI = 0                           # else: MSI is not successful
+                        return False
+            else:
+                self.blnIsMSI = 0                               # when the return value of show ica connection doesn't have the output for the given user...
+                return False
+        except nitro_exception as e:
+            objLog.critical("Exception::f_icaconn_ismsi::errorcode="+str(e.errorcode)+",message="+ e.message)
+            return False
+        except Exception as e:
+            objLog.critical("Exception::f_icaconn_ismsi::message="+str(e.args))
+            return False
+
+    def f_icaconn_iscgp(self, strUsername):  #, strClientIP, strDestIP):
+        self.blnIsCGP = 0                                       # resetting the Flag before validating
+
+        try:
+            if (self.f_show_ica_connection(strUsername)):         # if the icaconnection reports True
+                if self.f_getClientServerIP(self.lstICAConnection, l_InitVars.intCGPPort):
+                    for i in self.lstICAConnection:                 # iterate through the output
+                        if ((i.username == strUsername) and (i.srcip == self.strClientIP) and (i.destport == l_InitVars.intCGPPort)):         # if the given username and client IP has a connection ot dest port 2598
+                            objLog.info("The user " + strUsername + " has a CGP connection from " + self.strClientIP + " to " + self.strDestIP)
+                            self.blnIsCGP = 1                       # then: CGP is successful
+                            return True
+                else:
+                    objLog.critical("The user " + strUsername + " has no CGP connection as expected from " + self.strClientIP + " to " + self.strDestIP)
+                    for i in self.lstICAConnection:                 # count the number of connections for the user from the same client
+                        objLog.debug(i.username + " - " + str(i.srcip) + ":" + str(i.srcport) + " to " + str(i.destip) + ":" + str(i.destport))
+                    self.blnIsCGP = 0                           # else: CGP is not successful
+                    return False
+            else:
+                self.blnIsCGP = 0                               # when the return value of show ica connection doesn't have the output for the given user..
+                return False
+        except nitro_exception as e:
+            objLog.critical("Exception::f_icaconn_iscgp::errorcode="+str(e.errorcode)+",message="+ e.message)
+            return False
+        except Exception as e:
+            objLog.critical("Exception::f_icaconn_iscgp::message="+str(e.args))
+            return False
+
+    def f_icaconn_issocks(self, strUsername):   #, strClientIP, strDestIP):
+        self.blnIsSocks = 0                                       # resetting the Flag before validating
+        try:
+            if (self.f_show_ica_connection(strUsername)):         # if the icaconnection reports True
+                if self.f_getClientServerIP(self.lstICAConnection, l_InitVars.intSOCKSPort):
+                    for i in self.lstICAConnection:
+                        if ((i.username == strUsername) and (i.srcip == self.strClientIP) and (i.destport == l_InitVars.intSOCKSPort)):            # if the given username and client IP has a connection ot dest port 1494
+                            objLog.info("The user " + strUsername + " has a SOCKS connection from " + self.strClientIP + " to " + self.strDestIP)
+                            self.blnIsSocks = 1                       # then: SOCKS is successful
+                            return True
+                    else:
+                        objLog.critical("The user " + strUsername + " has no SOCKS connection as expected from "  +self.strClientIP + " to " + self.strDestIP)
+                        for i in self.lstICAConnection:                 # count the number of connections for the user from the same client
+                            objLog.debug(i.username + " - " + str(i.srcip) + ":" + str(i.srcport) + " to " + str(i.destip) + ":" + str(i.destport))
+                        self.blnIsSocks = 0                           # then: SOCKS is not successful
+                        return False
+                else:
+                    self.blnIsSocks = 0                           # then: SOCKS is not successful
+                    return False
+        except nitro_exception as e:
+            objLog.critical("Exception::f_icaconn_issocks::errorcode="+str(e.errorcode)+",message="+ e.message)
+            return False
+        except Exception as e:
+            objLog.critical("Exception::f_icaconn_issocks::message="+str(e.args))
+            return False
+
+    def f_icaconn_check_sr(self, strUsername):  #, strClientIP, strDestIP):
+        self.blnIsSRSuccess = 0                                       # resetting the Flag before validating
+        intPrevCount = 0
+        lstDestPort = []
+        lstDestPortPrev = []
+        lstSrcPort = []
+        lstSrcPortPrev = []
+        intCount = 0
+        try:
+            if self.f_getClientServerIP(self.lstICAConnection, l_InitVars.intCGPPort):
+                self.lstICAConnectionPrev = self.lstICAConnection
+                for i in self.lstICAConnectionPrev:                 # for each ica conn in the prev output... assumption: for every ica connection established, the "show ica connection output is got and saved in the global list variable.. So for SR, the prev output is available to compare with the current output..
+                    if ((i.username == strUsername) and (i.srcip == self.strClientIP) and (i.destip == self.strDestIP)):
+                        intPrevCount += 1
+                        lstDestPortPrev.append(i.destport)          # record the destination port for each prev connection
+                        lstSrcPortPrev.append(i.srcport)            # record the source port for each prev connection
+
+                if (self.f_show_ica_connection(strUsername)):       # if the icaconnection reports True
+                    for i in self.lstICAConnection:
+                        if ((i.username == strUsername) and (i.srcip == self.strClientIP) and (i.destip == self.strDestIP)):
+                            intCount += 1
+                            lstDestPort.append(i.destport)          # record the destination port for each connection
+                            lstSrcPort.append(i.srcport)            # record the source port for each connection
+
+                lstDestPortPrev.sort()
+                lstDestPort.sort()
+                lstSrcPortPrev.sort()
+                lstSrcPort.sort()
+                if (intCount == intPrevCount) and (lstDestPortPrev == lstDestPort) and (lstSrcPortPrev != lstSrcPort):      # if the number of ica connections in the prev and current output AND to all the prev destination ports and the Source ports are not the same as prev..
+                    objLog.info("The user " + strUsername + " has successfully reconnected from " + self.strClientIP + " to " + self.strDestIP)
+                    objLog.debug("Source Port list before disconnect of the network: " + str(lstSrcPortPrev))
+                    objLog.debug("Source Port list after disconnect of the network: " + str(lstSrcPort))
+                    self.blnIsSRSuccess = 1                         # then: SR is successful
+                    return True
+                else:
+                    objLog.critical("The user " + strUsername + " has not reconnected from " + self.strClientIP + " to " + self.strDestIP)
+                    objLog.debug("Source Port list before disconnect of the network: " + str(lstSrcPortPrev))
+                    objLog.debug("Source Port list after disconnect of the network: " + str(lstSrcPort))
+                    for i in self.lstICAConnection:                 # count the number of connections for the user from the same client
+                        objLog.debug(i.username + " - " + str(i.srcip) + ":" + str(i.srcport) + " to " + str(i.destip) + ":" + str(i.destport))
+                    self.blnIsSRSuccess = 0                         # else: SR is not successful
+                    return False
+        except nitro_exception as e:
+            objLog.critical("Exception::f_icaconn_check_sr::errorcode="+str(e.errorcode)+",message="+ e.message)
+            return False
+        except Exception as e:
+            objLog.critical("Exception::f_icaconn_check_sr::message="+str(e.args))
+            return False
+
+    def f_ForceFailover(self):
+        try:
+            objHAResource = hafailover()
+            flag = objHAResource.Force(self.nsSession, objHAResource)
+            time.sleep(60)
+            if flag.message == "Done":
+                #TODO: Check the state of the node after failover and return result acordingly
+                # objHANode = hanode()
+                # objHANode.get(self.nsSession, objHANode)
+                # if objHANode.state == "Secondary":
+                #     objLog.info("Failover is successful.")
+                return True
+            else:
+                objLog.critical("Failover of DUT failed.")
+                return False
+        except nitro_exception as e:
+            objLog.critical("Exception::f_ForceFailover::errorcode="+str(e.errorcode)+",message="+ e.message)
+            return False
+        except Exception as e:
+            objLog.critical("Exception::f_ForceFailover::message="+str(e.args))
+            return False
+
+    def f_ChangeConfig(self, dictConfig):
+        strConfig = str(dictConfig)
+        strOperation = strConfig.split(":", 2)[0].strip("{").strip("'")
+        strFunction = strConfig.split(":", 2)[1].strip().strip("{").strip("'")
+
+        try:
+            objConfig = globals()[strFunction]()
+            strNew = strConfig.split(":", 2)[2].strip("}") + "}"
+            dictParams = eval(strNew)
+
+            for i in dictParams:
+                setattr(objConfig, i, dictParams[i])
+
+            if (strOperation == "set"):
+                strOperation = "update"
+
+            if(strOperation == "unset"):
+                arrUnsetParams = []
+                dictUnsetParams = eval(strNew)
+                for i in dictUnsetParams.keys():
+                    arrUnsetParams.append(i)
+                flag = objConfig.unset(self.nsSession, objConfig, arrUnsetParams)
+            else:
+                flag = objConfig.__getattribute__(strOperation)(self.nsSession, objConfig)
+
+            if flag.errorcode == 0:
+                objLog.info("DUT Configuration is successful")
+                return True
+            else:
+                objLog.critical("DUT Configuration failed: " + flag.message)
+                return False
+        except nitro_exception as e:
+            objLog.critical("Exception::f_ChangeConfig::errorcode="+str(e.errorcode)+",message="+ e.message)
+            return False
+        except Exception as e:
+            objLog.critical("Exception::f_ChangeConfig::message="+str(e.args))
+            return False
+
+    def f_checkHAStatus(self):
+        objHANode = hanode()
+        flag = objHANode.get(self)
+        #flag = objHANode.get(self)
+        #print(type(flag))
+        return objHANode.state
+
+
+    def f_configureSecondHop(self, strDHvserverName, strDHvip, strCertName, strKeyName):
+        self.f_unconfigureSecondHop(strDHvserverName)
+        dictConf ={'add': {"vpnvserver":{"name":strDHvserverName,"servicetype":"ssl","ipv46":strDHvip,"port":"443","doublehop":"enabled"}}}
+        if self.f_ChangeConfig(dictConf):
+            dictConf = {'add':{"sslcertkey":{"certkey":"dhckp","cert":strCertName,"key":strKeyName}}}
+            if self.f_ChangeConfig(dictConf):
+                dictConf = {'add':{"sslvserver_sslcertkey_binding":{"vservername": strDHvserverName,"certkeyname":"dhckp"}}}
+                if self.f_ChangeConfig(dictConf):
+                    return True
+                else:
+                    return False
+            else:
+                return False
+        else:
+            return False
+
+
+    def f_unconfigureSecondHop(self, strDHvserverName):
+        dictConf ={'delete': {"vpnvserver":{"name":strDHvserverName}}}
+        if self.f_ChangeConfig(dictConf):
+            dictConf = {'delete':{"sslcertkey":{"certkey":"dhckp"}}}
+            if self.f_ChangeConfig(dictConf):
+                return True
+            else:
+                return False
+        else:
+            return False
+
+    def f_checkSTAStatus(self, strVserverName = "None"):
+        import time
+        time.sleep(30)          #TODO: What is the optimal wait time before checking the sta status.. sometimes it succeeds after 10s wait, somethimes not even after 30 s wait..
+        if strVserverName == "None":
+            objLog.debug("STA Aut for global:")
+            response = vpnglobal_staserver_binding.get(self.nsSession)
+        else:
+            objLog.debug("STA Aut for vserver:")
+            response = vpnvserver_staserver_binding.get(self.nsSession, strVserverName)
+        for i in response:
+            if i.staauthid:
+                objLog.debug("STA Auth ID: "+ i.staauthid)
+                return True  # When there is atleast 1 STA server that is up, return true
+        else:
+            return False
+            #print(response[i].staauthid)
+
+    def f_SaveICAStats(self):
+        '''
+        Function : f_SaveICAStats
+        Description : To save ICA Stats(AAA stats and Vserver data)
+        Arguments : None
+        Return Value : None
+        '''
+
+        objLog.debug("In f_SaveICAStats Function")
+        self.f_SaveAAAStats()
+        self.f_SaveVPNVserver()
+        return
+
+    def f_SaveAAAStats(self):
+        '''
+        Function : f_SaveAAAStats
+        Description : To save aaa stats output in a object
+        Arguments : Flag to tell the initial data or final data, 1 for final data, 0 for initial data
+        Return Value : None
+        '''
+
+        objLog.debug("In f_SaveAAAStats Function")
+        lstAAAStats = aaa_stats.get(self.nsSession)
+        self.objAAAStatsPrev = self.objAAAStatsCurr
+        self.objAAAStatsCurr = lstAAAStats.pop(0)
+        return
+
+    def f_SaveVPNVserver(self):
+        '''
+        Function : f_SaveVPNVserver
+        Description : To save VPN vserver output in a object
+        Arguments : Flag to tell the initial data or final data, 1 for final data, 0 for initial data
+        Return Value : None
+        '''
+
+        objLog.debug("In f_SaveVPNVserver Function")
+        lstVPNVserver = vpnvserver.get(self.nsSession)
+        self.objVPNVserverPrev = self.objVPNVserverCurr
+        self.objVPNVserverCurr = lstVPNVserver.pop(0)
+        return
+
+    def f_ValidateICAStats(self, ICAMode="SmartAccess"):
+        '''
+        Function : f_ValidateICAStats
+        Description : To Validate ICAStats test
+        Arguments : ICAMode
+        Return Value : Result, 0 incase of success, non-zero otherwise
+        '''
+
+        objLog.debug("In f_ValidateICAStats Function")
+        blnresult = self.f_ValidateICAAAAStats(ICAMode)
+        if(blnresult == False):
+            return(blnresult)
+
+        blnresult = self.f_ValidateICAVPNVserver(ICAMode)
+        return(blnresult)
+
+    def f_ValidateICAAAAStats(self, ICAMode):
+        '''
+        Function : f_ValidateAAAStatsICAonly
+        Description : To Validate the AAA stats snapshots taken before and after the ICAonly test
+        Arguments : None
+        Return Value : Result, 0 incase of stats raise, non-zero incase there is no raise in stats count
+        '''
+
+        objLog.debug("In f_ValidateICAAAAStats Function")
+        result = True
+
+        if(ICAMode.upper() == "ICAONLY"):
+            if(self.objAAAStatsPrev._aaacuricasessions >= self.objAAAStatsCurr._aaacuricasessions):
+                objLog.error("ICA only sessions count is same before and after the test, current ica only sessions:" + self.objAAAStatsCurr._aaacuricasessions)
+                result = False
+            else:
+                objLog.info("ICA only sessions count got incremented, Sessions before test:" + self.objAAAStatsPrev._aaacuricasessions + ", Sessions after test:" + self.objAAAStatsCurr._aaacuricasessions)
+
+            if(self.objAAAStatsPrev._aaacuricaonlyconn >= self.objAAAStatsCurr._aaacuricaonlyconn):
+                objLog.error("ICA only connections count is same before and after the test, Connections:" + self.objAAAStatsCurr._aaacuricaonlyconn)
+                result = False
+            else:
+                objLog.info("ICA only connections count got incremented, Connections before test:" + self.objAAAStatsPrev._aaacuricaonlyconn + ", Connections after test:" + self.objAAAStatsCurr._aaacuricasessions)
+
+            return(result)
+
+        else:
+            if(self.objAAAStatsPrev._aaacursessions >= self.objAAAStatsCurr._aaacursessions):
+                objLog.error("ICA SGmode sessions count is same before and after the test, ICA SGmode sessions:" + self.objAAAStatsCurr._aaacursessions)
+                result = False
+            else:
+                objLog.info("ICA SGmode sessions count got incremented, Sessions before test:" + self.objAAAStatsPrev._aaacursessions + ", Sessions after test:" + self.objAAAStatsCurr._aaacursessions)
+
+            if(self.objAAAStatsPrev._aaacuricaconn >= self.objAAAStatsCurr._aaacuricaconn):
+                objLog.error("ICA SGmode connections count is same before and after the test, ICA SGmode Connections:" + self.objAAAStatsCurr._aaacuricaconn)
+                result = False
+            else:
+                objLog.info("ICA only connections count got incremented, Connections before test:" + self.objAAAStatsPrev._aaacuricaconn + ", Connections after test:" + self.objAAAStatsCurr._aaacuricaconn)
+
+            return(result)
+
+    def f_ValidateICAVPNVserver(self, ICAMode):
+        '''
+        Function : f_ValidateVPNVserverICAonly
+        Description : To Validate the VPN Vserver snapshots taken before and after the ICAonly test
+        Arguments : None
+        Return Value : Result, 0 incase of stats raise, non-zero incase there is no raise in stats count
+        '''
+
+        objLog.debug("In f_ValidateVPNVserverICAonly Function")
+        result = True
+        if(ICAMode.upper() == "ICAONLY"):
+            if(self.objVPNVserverCurr._icaonly != "ON"):
+                objLog.error("ICA only state is not ON from vpn vserver output, state :" + self.objVPNVserverCurr._icaonly)
+                result = False
+            objLog.info("ica only state: " + self.objVPNVserverCurr._icaonly)
+            objLog.info("Initial Current aaa users: " + self.objVPNVserverPrev._curaaausers)
+            objLog.info("Final Current aaa users: " + self.objVPNVserverCurr._curaaausers)
+            #TBD: More logic to be added to validate vpn vserver counters
+        else:
+            if(self.objVPNVserverCurr._icaonly != "OFF"):
+                objLog.error("ICA only state is not OFF from vpn vserver output, state :" + self.objVPNVserverCurr._icaonly)
+                result = False
+            objLog.info("ica only state: " + self.objVPNVserverCurr._icaonly)
+            objLog.info("Initial Current aaa users: " + self.objVPNVserverPrev._curaaausers)
+            objLog.info("Final Current aaa users: " + self.objVPNVserverCurr._curaaausers)
+            #TBD: More logic to be added to validate vpn vserver counters
+        return(result)
+
+
+    def f_ValidateLicenses(self, expLicenses=1):
+        import time
+        time.sleep(10)
+        lstVPNVserver = vpnvserver.get(self.nsSession)
+        objVPNVserverCurr = lstVPNVserver.pop(0)
+
+        objLog.info("Initial Current aaa users: " + str(self.objVPNVserverCurr._curaaausers))
+        objLog.info("Final Current aaa users: " + str(objVPNVserverCurr._curaaausers))
+        intLicensesUsed = int(objVPNVserverCurr._curaaausers) - int(self.objVPNVserverCurr._curaaausers)
+
+        if(int(expLicenses) == intLicensesUsed):
+            return True
+        else:
+            objLog.error("Licenses expected to consume:" + str(expLicenses) + ",Actual Licenses consumed:" + str(intLicensesUsed) + " are not matching")
+            return False
+

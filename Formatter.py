@@ -1,3 +1,5 @@
+#Author : Devendra
+#Use: Testing of formatter %r using a variable
 formatter = "%r %r %r %r"
 
 print formatter % (1, 2, 3, 4)
